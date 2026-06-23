@@ -8,8 +8,15 @@ UPSTREAM_DIR="${SCRIPT_DIR}/llama.cpp"
 if [ -d "${UPSTREAM_DIR}/.git" ]; then
     echo "✓ Upstream llama.cpp already exists, updating..."
     cd "${UPSTREAM_DIR}"
+    # Check for local modifications
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        echo "⚠ WARNING: Your upstream directory has local modifications."
+        echo "  These will be discarded. Back them up first."
+        echo "  Press Enter to continue, or Ctrl+C to abort."
+        read -r
+    fi
     git fetch origin || true
-    git reset --hard origin/main 2>/dev/null || true
+    git reset --hard origin/main
 else
     echo "Cloning upstream llama.cpp..."
     git clone --depth 1 https://github.com/ggml-org/llama.cpp "${UPSTREAM_DIR}"
@@ -20,9 +27,11 @@ echo "Applying pascal patches..."
 cd "${UPSTREAM_DIR}"
 git apply --check "${SCRIPT_DIR}/patches/pascal-mmq.patch" 2>&1 && \
     git apply "${SCRIPT_DIR}/patches/pascal-mmq.patch" || {
-        echo "⚠ Patch failed to apply cleanly. Check for conflicts."
+        echo "⚠ Patch failed to apply cleanly."
         echo "  The patch targets ggml/src/ggml-cuda/mmq.cuh"
         echo "  Your upstream version may have diverged."
+        echo "  You can manually apply the patch from:"
+        echo "    ${SCRIPT_DIR}/patches/pascal-mmq.patch"
         exit 1
     }
 

@@ -33,6 +33,8 @@ Nine vector dot-product kernels now have loop unrolling enabled:
 |---|---|---|
 | Qwen3.6-27B Q6_K + tensor parallelism (2× GPU) | Tesla P40 + Quadro P6000 | **13.73 tok/s** (+59.5% vs baseline) |
 
+> **Note:** The tensor parallelism benchmark above uses two GPUs. The patch itself only improves single-GPU Pascal performance. Tensor parallelism is a separate configuration (`--split-mode tensor`).
+
 ## Setup & Build
 
 ```bash
@@ -72,8 +74,8 @@ The only source modification is in `ggml/src/ggml-cuda/mmq.cuh`:
 
 ## License
 
-Same as upstream llama.cpp (MIT).
+MIT — same as upstream llama.cpp.
 
 ## Credits
 
-Patches developed for production use on NVIDIA Tesla P40 + Quadro P6000.
+Patches developed for production inference on NVIDIA Tesla P40 + Quadro P6000.
