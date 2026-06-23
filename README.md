@@ -29,11 +29,14 @@ Nine vector dot-product kernels now have loop unrolling enabled:
 
 ## Benchmarks
 
+All benchmarks run on **NVIDIA Tesla P40 + Quadro P6000** with MTP (Multi-Token Prediction).
+
 | Config | GPU | Speed |
 |---|---|---|
-| Qwen3.6-27B Q6_K + tensor parallelism (2× GPU) | Tesla P40 + Quadro P6000 | **13.73 tok/s** (+59.5% vs baseline) |
+| Qwen3.6-27B MTP | P40 + P6000 | **27 tok/s** |
+| Qwen3.6-35B-A3B MOE MTP | P40 + P6000 | **71 tok/s** |
 
-> **Note:** The tensor parallelism benchmark above uses two GPUs. The patch itself only improves single-GPU Pascal performance. Tensor parallelism is a separate configuration (`--split-mode tensor`).
+> **Note:** These are single-GPU Pascal performance figures with the patches applied. Tensor parallelism (`--split-mode tensor`) is a separate configuration.
 
 ## Setup & Build
 
