@@ -15,12 +15,12 @@ cd "${UPSTREAM_DIR}"
 echo "Building pascallama.cpp..."
 cmake -B build \
     -DGGML_CUDA=ON \
-    -DFORCE_MMQ=ON \
-    -DFA_ALL_QUANTS=ON \
+    -DGGML_CUDA_FORCE_MMQ=ON \
+    -DGGML_CUDA_FA_ALL_QUANTS=ON \
     -DCMAKE_CUDA_ARCHITECTURES=61 \
     -DCMAKE_BUILD_TYPE=Release
 
-cmake --build build --config Release --parallel $(nproc)
+cmake --build build --config Release --parallel "$(nproc)"
 
 echo "✓ Build complete."
-echo "  Binary: ${UPSTREAM_DIR}/build/bin/llama-server"
+echo "  Try: ./build/bin/llama-server --help"

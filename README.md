@@ -5,12 +5,14 @@ Optimised `llama.cpp` fork for **NVIDIA Pascal GPUs** (SM 6.1 — GTX 10xx, P40,
 ## What's different
 
 ### 1. `mmq_y` increased from 64 to 96 for Pascal
+
 For SM 6.1 (Pascal), the matrix multiplication tile size `mmq_y` is set to **96** instead of the default **64**.
 
 - Shared memory per block at `mmq_y=96`: ~28 KB (fits 2 blocks/SM within the 64 KB limit)
 - Better data parallelism → higher throughput
 
 ### 2. `#pragma unroll` enabled on all DP4A vec_dot kernels
+
 Nine vector dot-product kernels now have loop unrolling enabled:
 
 | Kernel | Quantisation |
@@ -29,15 +31,7 @@ Nine vector dot-product kernels now have loop unrolling enabled:
 
 | Config | GPU | Speed |
 |---|---|---|
-| Qwen3.6-27B Q6_K + tensor parallelism | P40 + P6000 | **13.73 tok/s** (+59.5% vs baseline) |
-
-## Prerequisites
-
-- NVIDIA GPU with Pascal architecture (compute capability 6.1) — GTX 10xx, P40, M40
-- NVIDIA driver ≥ 470
-- CUDA Toolkit ≥ 11.0
-- CMake ≥ 3.14
-- Git
+| Qwen3.6-27B Q6_K + tensor parallelism (2× GPU) | Tesla P40 + Quadro P6000 | **13.73 tok/s** (+59.5% vs baseline) |
 
 ## Setup & Build
 
@@ -55,13 +49,12 @@ chmod +x build.sh
 ./build.sh
 ```
 
-### Build flags (applied automatically)
+### Build flags
 
-- `FORCE_MMQ=ON` — enable matrix-multiplication kernels
-- `FA_ALL_QUANTS=ON` — enable all quantisation variants
+- `GGML_CUDA=ON` — enable CUDA backend
+- `GGML_CUDA_FORCE_MMQ=ON` — enable matrix-multiplication kernels
+- `GGML_CUDA_FA_ALL_QUANTS=ON` — enable all quantisation variants
 - `CMAKE_CUDA_ARCHITECTURES=61` — target Pascal (SM 6.1)
-- `PEER_MAX_BATCH=512` — increased for multi-GPU
-- `COMPRESSION=balance` — balance between speed and memory
 
 ## Patch details
 
