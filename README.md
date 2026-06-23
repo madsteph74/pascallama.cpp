@@ -1,6 +1,6 @@
 # pascallama.cpp
 
-Optimised `llama.cpp` fork for **NVIDIA Pascal GPUs** (SM 6.1 — GTX 10xx, P40, M40).
+A set of optimised patches for `llama.cpp` targeting **NVIDIA Pascal GPUs** (SM 6.1 — GTX 10xx, P40, M40).
 
 ## What's different
 
