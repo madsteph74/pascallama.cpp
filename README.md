@@ -50,7 +50,7 @@ llama.cpp at the pinned commit. Decode speed:
 for reference in the git history of this README; the 16 Oct re-measure of the 35B at 262k ctx matched.)
 
 **Why dense loses to MoE:** the dense 27B re-reads its full 24 GB of weights for *every* token, while
-the 3.3B-active MoE reads a fraction of that. Even with a flotte-record 85.4 % draft acceptance, the
+the 3.3B-active MoE reads a fraction of that. Even with a fleet-record 85.4 % draft acceptance, the
 dense config lands ~2.6× below the MoE one — on Pascal MMQ, active bytes per token decide, and the
 DP4A patches only influence *how* those bytes are read.
 
