@@ -1,39 +1,47 @@
 #!/usr/bin/env bash
-# setup.sh — Clone upstream llama.cpp and apply pascal patches
+# setup.sh — Clone upstream llama.cpp at the TESTED commit and apply the Pascal MMQ patches
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPSTREAM_DIR="${SCRIPT_DIR}/llama.cpp"
+PINNED_COMMIT="a0e6dc7384edb8f5d927155e1d26c10b4a310e6d"
+UPSTREAM_URL="https://github.com/ggml-org/llama.cpp"
 
 if [ -d "${UPSTREAM_DIR}/.git" ]; then
-    echo "✓ Upstream llama.cpp already exists, updating..."
+    echo "✓ Upstream llama.cpp already exists, fetching and checking out the pinned commit..."
     cd "${UPSTREAM_DIR}"
-    # Check for local modifications
+    git fetch origin || true
     if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
-        echo "⚠ WARNING: Your upstream directory has local modifications."
-        echo "  These will be discarded. Back them up first."
-        echo "  Press Enter to continue, or Ctrl+C to abort."
+        echo "⚠ WARNING: your upstream directory has local modifications."
+        echo "  The patches are probably already applied. To start over:"
+        echo "    cd ${UPSTREAM_DIR} && git checkout -- . && git checkout ${PINNED_COMMIT}"
+        echo "  Press Enter to continue anyway, or Ctrl+C to abort."
         read -r
     fi
-    git fetch origin || true
-    git reset --hard origin/main
 else
-    echo "Cloning upstream llama.cpp..."
-    git clone --depth 1 https://github.com/ggml-org/llama.cpp "${UPSTREAM_DIR}"
+    echo "Cloning upstream llama.cpp (full history is needed for the pinned commit)..."
+    git clone "${UPSTREAM_URL}" "${UPSTREAM_DIR}"
 fi
 
-# Apply patches
-echo "Applying pascal patches..."
 cd "${UPSTREAM_DIR}"
-git apply --check "${SCRIPT_DIR}/patches/pascal-mmq.patch" 2>&1 && \
-    git apply "${SCRIPT_DIR}/patches/pascal-mmq.patch" || {
-        echo "⚠ Patch failed to apply cleanly."
-        echo "  The patch targets ggml/src/ggml-cuda/mmq.cuh"
-        echo "  Your upstream version may have diverged."
-        echo "  You can manually apply the patch from:"
-        echo "    ${SCRIPT_DIR}/patches/pascal-mmq.patch"
-        exit 1
-    }
+echo "Checking out the tested commit ${PINNED_COMMIT}..."
+git checkout --quiet "${PINNED_COMMIT}"
 
-echo "✓ Setup complete."
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "Working tree dirty before applying; undoing tracked changes..."
+    git checkout -- .
+fi
+
+echo "Applying the Pascal MMQ patches..."
+git apply --check "${SCRIPT_DIR}/patches/001-pascal-mmq-dp4a.patch" || {
+    echo "⚠ The patch no longer applies cleanly at the pinned commit."
+    echo "  If upstream moved the files, the hunks need updating (see README.md)."
+    echo "  Patch file: ${SCRIPT_DIR}/patches/001-pascal-mmq-dp4a.patch"
+    exit 1
+}
+git apply "${SCRIPT_DIR}/patches/001-pascal-mmq-dp4a.patch"
+
+echo "✓ Setup complete (llama.cpp @ ${PINNED_COMMIT} + Pascal MMQ patches)."
+echo "  To undo the patches:  git apply -R ../patches/001-pascal-mmq-dp4a.patch"
+echo "  To re-apply cleanly:  git checkout -- ."
 echo "  Run './build.sh' to compile."

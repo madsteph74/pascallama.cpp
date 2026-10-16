@@ -2,41 +2,49 @@
 
 A set of optimised patches for `llama.cpp` targeting **NVIDIA Pascal GPUs** (SM 6.1 — GTX 10xx, P40, M40).
 
+**Tested against upstream llama.cpp @ `a0e6dc738` (master, Oct 2026).** `setup.sh` clones and checks out
+exactly that commit before applying the patches — upstream moves fast, and the MMQ code path got
+restructured, so a moving target broke the setup between June and October 2026. If upstream later
+changes `ggml/src/ggml-cuda/mmq-config-pascal-dp4a.cuh` or `mmq-vec-dot.cuh` in a conflicting way, the
+tile values below need to be re-ported onto the new shape (see "Updating the patch" at the bottom).
+
 ## What's different
 
-### 1. `mmq_y` increased from 64 to 96 for Pascal
+Upstream now keeps its own Pascal-DP4A configuration file, `ggml/src/ggml-cuda/mmq-config-pascal-dp4a.cuh`
+(with small conservative tiles: 8/16/32/64 rows), and keeps the DP4A `#pragma unroll`s commented out in
+`ggml/src/ggml-cuda/mmq-vec-dot.cuh`. For SM 6.1 this patch:
 
-For SM 6.1 (Pascal), the matrix multiplication tile size `mmq_y` is set to **96** instead of the default **64**.
+### 1. Retunes the Pascal-DP4A config to 96-row tiles
 
-- Shared memory per block at `mmq_y=96`: ~28 KB (fits 2 blocks/SM within the 64 KB limit)
-- Better data parallelism → higher throughput
+All 242 configuration rows in `mmq-config-pascal-dp4a.cuh` are set to the 96-row tile
+(shaped like upstream's own rows, only the tile width changes):
 
-### 2. `#pragma unroll` enabled on all DP4A vec_dot kernels
+```c
+CASE(GGML_TYPE_Q1_0, 256, 2,  64,  96, GGML_CUDA_MMQ_SRAM_LAYOUT_Q8_0, MMQ_ITER_K, false, true);
+```
 
-Nine vector dot-product kernels now have loop unrolling enabled:
+- Shared memory per block at 96 rows: ~28 KB (2 blocks/SM within the 64 KB limit)
+- Better data parallelism → measurably higher throughput on SM 6.1 (measured below)
 
-| Kernel | Quantisation |
-|---|---|
-| `vec_dot_q4_0_q8_1_dp4a` | Q4_0 / Q8_1 |
-| `vec_dot_q4_1_q8_1_dp4a` | Q4_1 / Q8_1 |
-| `vec_dot_q8_0_q8_1_dp4a` | Q8_0 / Q8_1 |
-| `vec_dot_q8_1_q8_1_dp4a` | Q8_1 / Q8_1 |
-| `vec_dot_q8_0_16_q8_1_dp4a` | Q8_0 / Q8_1 (16-bit) |
-| `vec_dot_q3_K_q8_1_dp4a` | Q3_K / Q8_1 |
-| `vec_dot_q4_K_q8_1_dp4a` | Q4_K / Q8_1 |
-| `vec_dot_q5_K_q8_1_dp4a` | Q5_K / Q8_1 |
-| `vec_dot_q6_K_q8_1_dp4a` | Q6_K / Q8_1 |
+### 2. Re-enables `#pragma unroll` on nine DP4A vec_dot kernels
+
+Nine `// #pragma unroll` lines are uncommented in `mmq-vec-dot.cuh`.
+
+That is the whole change: no new files, no engine behaviour changes, Volta and newer keep upstream's
+own values (the patch's rows are the Pascal-DP4A file only).
 
 ## Benchmarks
 
-All benchmarks run on **NVIDIA Tesla P40 + Quadro P6000** with MTP (Multi-Token Prediction).
+All benchmarks run on **NVIDIA Tesla P40 with MTP** (multi-token prediction). Decode speed:
 
 | Config | GPU | Speed |
 |---|---|---|
-| Qwen3.6-27B MTP | P40 + P6000 | **27 tok/s** |
-| Qwen3.6-35B-A3B MOE MTP | P40 + P6000 | **71 tok/s** |
+| Qwen3.6-35B-A3B MOE MTP | P40 | **~75 tok/s** |
 
-> **Note:** These are single-GPU Pascal performance figures with the patches applied. Tensor parallelism (`--split-mode tensor`) is a separate configuration.
+(The older June-2026 numbers — 27 tok/s on a 27B MTP and 71 tok/s on the 35B MOE over P40+P6000 — are
+kept for reference in the git history of this README.)
+
+> Single-GPU Pascal figures. Tensor parallelism (`--split-mode tensor`) is a separate configuration.
 
 ## Setup & Build
 
@@ -45,7 +53,7 @@ All benchmarks run on **NVIDIA Tesla P40 + Quadro P6000** with MTP (Multi-Token 
 git clone https://github.com/madsteph74/pascallama.cpp
 cd pascallama.cpp
 
-# Setup: clone upstream llama.cpp and apply patches
+# Setup: clone upstream llama.cpp at the tested commit, apply the patches
 chmod +x setup.sh
 ./setup.sh
 
@@ -56,24 +64,32 @@ chmod +x build.sh
 
 ### Build flags
 
-- `GGML_CUDA=ON` — enable CUDA backend
-- `GGML_CUDA_FORCE_MMQ=ON` — enable matrix-multiplication kernels
-- `GGML_CUDA_FA_ALL_QUANTS=ON` — enable all quantisation variants
+- `GGML_CUDA=ON` — enable the CUDA backend
+- `GGML_CUDA_FORCE_MMQ=ON` — force MMQ instead of cuBLAS GEMM
 - `CMAKE_CUDA_ARCHITECTURES=61` — target Pascal (SM 6.1)
+
+(The 71 tok/s P40+P6000 run in the git history also used `GGML_CUDA_FA_ALL_QUANTS=ON`; the current
+build drops it.) 
 
 ## Patch details
 
-The only source modification is in `ggml/src/ggml-cuda/mmq.cuh`:
+The patch touches exactly two upstream files:
 
-1. **Host path** (`get_mmq_y_host`): added a branch for DP4A (Pascal) returning 96 between Volta (128) and fallback (64)
-2. **Device path** (`get_mmq_y_device`): added `#elif __CUDA_ARCH__ >= GGML_CUDA_CC_DP4A` returning 96
-3. **Nine vec_dot kernels**: uncommented `// #pragma unroll` → `#pragma unroll`
+1. `ggml/src/ggml-cuda/mmq-config-pascal-dp4a.cuh` — the 242 config rows re-typed to 96-row tiles
+2. `ggml/src/ggml-cuda/mmq-vec-dot.cuh` — nine `// #pragma unroll` re-enabled
 
-## Compatibility
+Compatibility as of the tested commit:
 
-- **Pascal (SM 6.1)**: full support — `mmq_y=96` + `#pragma unroll`
-- **Volta+ (SM 7.0+)**: no change — uses upstream values (`mmq_y=128`)
-- **Pre-Volta**: no change — uses fallback (`mmq_y=64`)
+- **Pascal (SM 6.1)**: 96-row tiles + unrolled DP4A vec_dots
+- **Volta+ (SM 7.0+)**: untouched — upstream's own values
+- **Pre-Volta**: untouched — upstream's own values
+
+## Updating the patch
+
+If upstream changes one of the two files, regenerate the diff from a clean checkout of the new
+upstream commit after re-porting the tile values, and update the pinned commit in `setup.sh`
+(and this README). The June-2026 single-file patch against `mmq.cuh` is kept in
+`patches/legacy/pascal-mmq.patch` for reference.
 
 ## License
 
@@ -81,4 +97,5 @@ MIT — same as upstream llama.cpp.
 
 ## Credits
 
-Patches developed for production inference on NVIDIA Tesla P40 + Quadro P6000.
+Patches developed for production inference on NVIDIA Tesla P40 (+ Quadro P6000 for the earlier
+two-GPU runs). Upstream llama.cpp by the ggml-org team and contributors.
