@@ -2,11 +2,12 @@
 
 A set of optimised patches for `llama.cpp` targeting **NVIDIA Pascal GPUs** (SM 6.1 — GTX 10xx, P40, M40).
 
-**Tested against upstream llama.cpp @ `a0e6dc738` (master, Oct 2026).** `setup.sh` clones and checks out
-exactly that commit before applying the patches — upstream moves fast, and the MMQ code path got
-restructured, so a moving target broke the setup between June and October 2026. If upstream later
-changes `ggml/src/ggml-cuda/mmq-config-pascal-dp4a.cuh` or `mmq-vec-dot.cuh` in a conflicting way, the
-tile values below need to be re-ported onto the new shape (see "Updating the patch" at the bottom).
+**Tested against upstream llama.cpp @ `a0e6dc738` (master, Oct 2026 — v0.7.0-era, includes the upstream
+MoE expert cache).** `setup.sh` clones and checks out exactly that commit before applying the patches —
+upstream moves fast, and the MMQ code path got restructured, so a moving target broke the setup between
+June and October 2026. If upstream later changes `ggml/src/ggml-cuda/mmq-config-pascal-dp4a.cuh` or
+`mmq-vec-dot.cuh` in a conflicting way, the tile values below need to be re-ported onto the new shape
+(see "Updating the patch" at the bottom).
 
 ## What's different
 
@@ -35,16 +36,41 @@ own values (the patch's rows are the Pascal-DP4A file only).
 
 ## Benchmarks
 
-All benchmarks run on **NVIDIA Tesla P40 with MTP** (multi-token prediction). Decode speed:
+All runs 16 Oct 2026 on **Tesla P40 (+ Quadro P6000) with MTP** (multi-token prediction), rebuilt
+llama.cpp at the pinned commit. Decode speed:
 
-| Config | GPU | Speed |
-|---|---|---|
-| Qwen3.6-35B-A3B MOE MTP | P40 | **~75 tok/s** |
+| Config | GPUs / split | Speed | MTP accept |
+|---|---|---|---|
+| Qwen3.6-35B-A3B MOE, Q8_0, MTP, ctx 262144 (KV q8_0) | P40+P6000, tensor-split | **70.8 tok/s** | 79.3 % |
+| Qwen3.8-27B dense, UD-Q6_K_XL, MTP (self-draft head), ctx 262144 | P40+P6000, tensor-split | 27.6 tok/s | **85.4 %** |
+| Qwen3.8-Flash-Next UD-Q2_K_XL (74.5 GB), + upstream MoE cache `--moe-cache-mib 6544` | P40+P6000, layer-split | 24.9 tok/s (17.0 baseline → **+47 %**) | — |
+| Qwen3.6-35B-A3B MOE MTP (single GPU, earlier Oct figure) | P40 | ~75 tok/s | — |
 
-(The older June-2026 numbers — 27 tok/s on a 27B MTP and 71 tok/s on the 35B MOE over P40+P6000 — are
-kept for reference in the git history of this README.)
+(The June-2026 numbers — 27 tok/s on a 27B MTP and 71 tok/s on the 35B MOE over P40+P6000 — are kept
+for reference in the git history of this README; the 16 Oct re-measure of the 35B at 262k ctx matched.)
 
-> Single-GPU Pascal figures. Tensor parallelism (`--split-mode tensor`) is a separate configuration.
+**Why dense loses to MoE:** the dense 27B re-reads its full 24 GB of weights for *every* token, while
+the 3.3B-active MoE reads a fraction of that. Even with a flotte-record 85.4 % draft acceptance, the
+dense config lands ~2.6× below the MoE one — on Pascal MMQ, active bytes per token decide, and the
+DP4A patches only influence *how* those bytes are read.
+
+## Upstream MoE expert cache on Pascal (tested v0.7.0 @ pinned commit)
+
+The upstream expert-cache merge (PR #29887 + #30112, released in v0.7.0) **works on SM 6.1** — no
+compute-capability gate in the merged implementation. Measured notes for running it on Pascal:
+
+- Decodes with experts overflowed to RAM benefit measurably: 17.0 → 24.9 tok/s (**+47 %**) at
+  `--moe-cache-mib 6544` on the P40+P6000 duo (Qwen3.8-Flash-Next UD-Q2_K_XL).
+- **Size the cache, don't max it**: an aggressive `-cmoe`/fit variant measured *worse* on the same duo
+  (15.2 tok/s, prefill −32 %). A/B test the cache size against your model's resident-expert footprint.
+- **`--split-mode tensor` and the MoE cache are mutually exclusive** (upstream throws). Choose one
+  strategy: tensor-split when the whole model fits in VRAM, layer-split + cache when experts overflow
+  to RAM.
+- Cache hits only apply to ubatch ≤ 32 tokens; larger batches take the classic offload path.
+- The cache serves the target context's MoE layers; the MTP draft never gets one by design
+  (`-cmoed` offloads draft experts to CPU if needed).
+- On Pascal with no NCCL, `--split-mode tensor` falls back to the internal butterfly AllReduce and
+  works fine on a 2-GPU duo.
 
 ## Setup & Build
 
@@ -69,7 +95,7 @@ chmod +x build.sh
 - `CMAKE_CUDA_ARCHITECTURES=61` — target Pascal (SM 6.1)
 
 (The 71 tok/s P40+P6000 run in the git history also used `GGML_CUDA_FA_ALL_QUANTS=ON`; the current
-build drops it.) 
+build drops it.)
 
 ## Patch details
 
